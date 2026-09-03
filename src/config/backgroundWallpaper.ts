@@ -4,7 +4,7 @@ export const backgroundWallpaper: BackgroundWallpaperConfig = {
 	// 壁纸模式："banner" 横幅壁纸，"fullscreen" 全屏壁纸，"overlay" 覆盖透明，"none" 纯色背景无壁纸
 	mode: "banner",
 	// 是否启用背景视频播放，配置后将在导航栏显示视频播放按钮
-	playerEnable: true,
+	playerEnable: false,
 	/**
 	 * 背景图片配置
 	 * 图片路径支持三种格式：
@@ -59,8 +59,7 @@ export const backgroundWallpaper: BackgroundWallpaperConfig = {
 		// 背景视频播放地址
 		// 支持单个视频路径（字符串）或多个视频循环（数组，参考上面壁纸配置）
 		// 支持远程视频URL，本地视频请放在 public/assets/videos/ 目录下
-		// playerUrl: "/assets/videos/firefly.mp4",
-		playerUrl: "https://bed.twoleaf.cn/file/1785658612716_firefly.mp4",
+		// playerUrl: "/assets/videos/background.mp4",
 	},
 	// 横幅壁纸和全屏壁纸共享配置
 	common: {
@@ -73,17 +72,14 @@ export const backgroundWallpaper: BackgroundWallpaperConfig = {
 			// 是否启用主页横幅文字
 			enable: true,
 			// 主页横幅主标题
-			title: "Lovely firefly!",
+			title: "RYH 的技术笔记",
 			// 主页横幅主标题字体大小
 			titleSize: "4.5rem",
 			// 主页横幅副标题
 			subtitle: [
-				"In Reddened Chrysalis, I Once Rest",
-				"From Shattered Sky, I Free Fall",
-				"Amidst Silenced Stars, I Deep Sleep",
-				"Upon Lighted Fyrefly, I Soon Gaze",
-				"From Undreamt Night, I Thence Shine",
-				"In Finalized Morrow, I Full Bloom",
+				"记录技术学习、项目实践和经验分享",
+				"把遇到的问题、方案和思考认真记录下来",
+				"从一次尝试，到一个可复用的解决方案",
 			],
 			// 主页横幅副标题字体大小
 			subtitleSize: "1.5rem",
@@ -100,21 +96,10 @@ export const backgroundWallpaper: BackgroundWallpaperConfig = {
 				pauseTime: 2000,
 			},
 			// 是否显示标题下方的链接图标
-			linksEnable: true,
+			linksEnable: false,
 			// 首页横幅标题下方的链接图标（可选，支持 showName 显示文字）
-			// 图标支持 Iconify 格式：fa7-brands:github、fa7-solid:envelope、mdi:rss 等
-			links: [
-				{
-					name: "Email",
-					icon: "fa7-solid:envelope",
-					url: "mailto:xiaye@msn.com",
-				},
-				{
-					name: "RSS",
-					icon: "fa7-solid:rss",
-					url: "/rss/",
-				},
-			],
+			// 图标支持 Iconify 格式：fa7-solid:envelope、material-symbols:link 等
+			links: [],
 		},
 		// 壁纸轮播配置，横幅壁纸和全屏壁纸共享，仅在配置多张图片时生效
 		carousel: {

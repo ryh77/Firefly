@@ -9,10 +9,10 @@ export const profileConfig: ProfileConfig = {
 	avatar: "assets/images/avatar.avif",
 
 	// 名字
-	name: "Firefly",
+	name: "码上记录者",
 
 	// 个人签名
-	bio: "Hello, I'm Firefly.",
+	bio: "记录技术学习、项目实践和经验分享。",
 
 	// 链接配置
 	// 已经预装的图标集：fa7-brands，fa7-regular，fa7-solid，material-symbols，simple-icons
@@ -22,16 +22,10 @@ export const profileConfig: ProfileConfig = {
 	// showName: true 时显示图标和名称，false 时只显示图标
 	links: [
 		{
-			name: "Email",
+			name: "3255164916@qq.com",
 			icon: "fa7-solid:envelope",
-			url: "mailto:xiaye@msn.com",
-			showName: false,
-		},
-		{
-			name: "RSS",
-			icon: "fa7-solid:rss",
-			url: "/rss/",
-			showName: false,
+			url: "mailto:3255164916@qq.com",
+			showName: true,
 		},
 	],
 };

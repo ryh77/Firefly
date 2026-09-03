@@ -389,8 +389,8 @@ const siteLogo = await getSiteLogo();
 
       // 初始化期间禁用 content-panel/wrapper 过渡，避免加载时布局/变量变化产生内容移动动画；
       // load 后移除（仅首次设置，swup 切页重跑脚本时不再重复）。布局已由 CSS 接管，无需 rAF 校正
-      if (!window.__fireflyLayoutTransitionGuard) {
-        window.__fireflyLayoutTransitionGuard = true;
+      if (!window.__siteLayoutTransitionGuard) {
+        window.__siteLayoutTransitionGuard = true;
         document.documentElement.setAttribute("data-layout-init", "");
         const removeLayoutInit = () =>
           document.documentElement.removeAttribute("data-layout-init");
@@ -438,13 +438,6 @@ const siteLogo = await getSiteLogo();
     <!-- defines global css variables. This will be applied to <html> <body> and some other elements idk why -->
 
     <slot name="head" />
-
-    <link
-      rel="alternate"
-      type="application/rss+xml"
-      title={profileConfig.name}
-      href={`${Astro.site}rss.xml`}
-    />
 
     <!-- Font Setup (Astro Font API) -->
     <FontSetup />

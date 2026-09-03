@@ -2,7 +2,6 @@
 import { Icon } from "astro-icon/components";
 import ImageWrapper from "@/components/common/ImageWrapper.astro";
 import { profileConfig } from "@/config/profileConfig";
-import { encodeMailto, MAILTO_ONCLICK_SCRIPT } from "@/utils/email-utils";
 import { url } from "@/utils/url-utils";
 
 interface Props {
@@ -61,11 +60,10 @@ const className = Astro.props.class;
                         : "btn-regular rounded-lg h-10 w-10 active:scale-90";
 
                     if (item.url.startsWith("mailto:")) {
-                        const encodedEmail = encodeMailto(item.url);
-                        return <a rel="me" aria-label={item.name} href="#" data-encoded-email={encodedEmail} onclick={MAILTO_ONCLICK_SCRIPT},
+                        return <a rel="me" aria-label={item.name} href={item.url} title="点击复制邮箱" data-copy-email={item.url.replace("mailto:", "")}
                                     class={className}>
                             <Icon name={item.icon} class="text-[1.5rem]"></Icon>
-                            {showName && item.name}
+                            {showName && <span data-email-label>{item.name}</span>}
                         </a>
                     } else {
                         return <a rel="me" aria-label={item.name} href={item.url} target="_blank" class={className}>
@@ -77,11 +75,10 @@ const className = Astro.props.class;
             )}
             {profileConfig.links.length == 1 && (function(item){
                 if (item.url.startsWith("mailto:")) {
-                        const encodedEmail = encodeMailto(item.url);
-                        return <a rel="me" aria-label={item.name} href="#" data-encoded-email={encodedEmail} onclick={MAILTO_ONCLICK_SCRIPT},
+                        return <a rel="me" aria-label={item.name} href={item.url} title="点击复制邮箱" data-copy-email={item.url.replace("mailto:", "")}
                                     class="btn-regular rounded-lg h-10 gap-2 px-3 font-bold active:scale-95">
                             <Icon name={item.icon} class="text-[1.5rem]"></Icon>
-                            {item.name}
+                            <span data-email-label>{item.name}</span>
                         </a>
                     } else {
                         return <a rel="me" aria-label={item.name} href={item.url} target="_blank"
@@ -94,3 +91,37 @@ const className = Astro.props.class;
         </div>
   </div>
 </div>
+
+<script is:inline>
+	if (!window.__profileEmailCopyBound) {
+		window.__profileEmailCopyBound = true;
+		document.addEventListener("click", async (event) => {
+			const trigger = event.target?.closest?.("[data-copy-email]");
+			if (!trigger) return;
+
+			event.preventDefault();
+
+			const email = trigger.dataset.copyEmail;
+			if (!email) return;
+
+			try {
+				await navigator.clipboard.writeText(email);
+				const label = trigger.querySelector("[data-email-label]");
+				if (!label) return;
+
+				const originalLabel = trigger.dataset.originalLabel || label.textContent || email;
+				trigger.dataset.originalLabel = originalLabel;
+				label.textContent = "已复制邮箱";
+
+				if (trigger.__emailCopyTimer) {
+					window.clearTimeout(trigger.__emailCopyTimer);
+				}
+				trigger.__emailCopyTimer = window.setTimeout(() => {
+					label.textContent = trigger.dataset.originalLabel || email;
+				}, 1500);
+			} catch {
+				window.location.href = trigger.getAttribute("href") || `mailto:${email}`;
+			}
+		});
+	}
+</script>

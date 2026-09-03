@@ -24,6 +24,8 @@ pnpm-debug.log*
 .DS_Store
 
 .vercel
+.wrangler/
+.wrangler-dry-run/
 
 package-lock.json
 bun.lockb

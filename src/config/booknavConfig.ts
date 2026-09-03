@@ -3,10 +3,10 @@ import type { BooknavGroup, BooknavPageConfig } from "../types/booknavConfig";
 // 书签导航页面配置
 export const booknavPageConfig: BooknavPageConfig = {
 	// 页面标题，如果留空则使用 i18n 中的翻译
-	title: "",
+	title: "书签导航",
 
 	// 页面描述文本，如果留空则使用 i18n 中的翻译
-	description: "",
+	description: "整理一些开发、部署和排错时常用的网站。",
 
 	// favicon 自动获取配置
 	favicon: {
@@ -32,13 +32,9 @@ export const booknavConfig: BooknavGroup[] = [
 		weight: 100,
 		items: [
 			{
-				title: "GitHub",
-				url: "https://github.com",
-				desc: "全球最大的代码托管平台",
-				// icon 字段可以使用 astro-icon 图标库的图标名称
-				// 也可以使用图片 URL 和本地图片路径
-				// 不填则会通过接口自动获取目标站点的 favicon 图标（需要在上面配置）
-				icon: "fa7-brands:github",
+				title: "Spring 官方文档",
+				url: "https://spring.io/projects/spring-boot",
+				desc: "Spring Boot 官方项目文档",
 				weight: 10,
 			},
 			{
@@ -48,38 +44,82 @@ export const booknavConfig: BooknavGroup[] = [
 				weight: 9,
 			},
 			{
-				title: "Astro",
-				url: "https://astro.build",
-				desc: "内容驱动型网站的 Web 框架",
+				title: "Vue",
+				url: "https://cn.vuejs.org",
+				desc: "Vue 中文官方文档",
 				weight: 8,
 			},
 			{
-				title: "Svelte",
-				url: "https://svelte.dev",
-				desc: "把组件编译成高效原生 JS 的框架",
+				title: "TypeScript",
+				url: "https://www.typescriptlang.org/docs/",
+				desc: "TypeScript 官方文档",
 				weight: 7,
 			},
 			{
-				title: "Tailwind CSS",
-				url: "https://tailwindcss.com",
-				desc: "一个功能强大且灵活的 CSS 框架",
+				title: "Maven Repository",
+				url: "https://mvnrepository.com",
+				desc: "查询 Java 依赖版本",
 				weight: 6,
 			},
 		],
 	},
 	{
-		id: "opensource",
-		name: "项目",
-		icon: "material-symbols:code-rounded",
-		desc: "好用的开源项目",
+		id: "backend",
+		name: "后端",
+		icon: "material-symbols:deployed-code-outline",
+		desc: "后端开发常用资料",
 		weight: 90,
 		items: [
 			{
-				title: "Firefly",
-				url: "https://github.com/CuteLeaf/Firefly",
-				desc: "清晰美观的 Astro 个人博客主题模板",
-				icon: "/favicon/firefly-32.png",
+				title: "MyBatis-Plus",
+				url: "https://baomidou.com",
+				desc: "MyBatis-Plus 官方文档",
 				weight: 10,
+			},
+			{
+				title: "Hutool",
+				url: "https://hutool.cn",
+				desc: "Java 工具类库文档",
+				weight: 9,
+			},
+			{
+				title: "EasyPOI",
+				url: "https://easypoi.mydoc.io",
+				desc: "Office 文档导入导出工具资料",
+				weight: 8,
+			},
+			{
+				title: "Docker Docs",
+				url: "https://docs.docker.com",
+				desc: "Docker 官方文档",
+				weight: 7,
+			},
+		],
+	},
+	{
+		id: "ops",
+		name: "部署运维",
+		icon: "material-symbols:terminal",
+		desc: "部署、服务器和排错资料",
+		weight: 85,
+		items: [
+			{
+				title: "Nginx 文档",
+				url: "https://nginx.org/en/docs/",
+				desc: "Nginx 官方文档",
+				weight: 10,
+			},
+			{
+				title: "Linux 命令手册",
+				url: "https://wangchujiang.com/linux-command/",
+				desc: "常用 Linux 命令查询",
+				weight: 9,
+			},
+			{
+				title: "SSL Labs",
+				url: "https://www.ssllabs.com/ssltest/",
+				desc: "HTTPS 证书和 TLS 配置检测",
+				weight: 8,
 			},
 		],
 	},
@@ -139,16 +179,15 @@ export const booknavConfig: BooknavGroup[] = [
 		weight: 70,
 		items: [
 			{
-				title: "Firefly Docs",
-				url: "https://docs-firefly.cuteleaf.cn",
-				desc: "Firefly 主题模板文档",
-				icon: "https://docs-firefly.cuteleaf.cn/logo.png",
+				title: "CSDN",
+				url: "https://www.csdn.net",
+				desc: "中文技术文章和问题检索",
 				weight: 10,
 			},
 			{
-				title: "夏夜流萤",
-				url: "https://blog.cuteleaf.cn",
-				desc: "飞萤之火自无梦的长夜亮起",
+				title: "掘金",
+				url: "https://juejin.cn",
+				desc: "开发者技术内容社区",
 				weight: 9,
 			},
 		],
