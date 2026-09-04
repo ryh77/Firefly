@@ -1,5 +1,5 @@
 ---
-title: 画 UML 的速成方法与版本追溯
+title: 画 PlantUML 的速成方法与版本追溯
 published: 2026-04-22
 description: 记录 PlantUML 的快速上手方法，以及如何通过 Git 管理 puml 源码来查看图表迭代过程。
 tags: [PlantUML, Markdown, UML, 文档]
@@ -7,7 +7,7 @@ category: 工具
 slug: markdown-plantuml
 ---
 
-## 画 UML 的速成方法与版本追溯
+## 画 PlantUML 的速成方法与版本追溯
 
 PlantUML 是一种使用纯文本描述图表的工具。你只需要写一段结构化语法，就可以生成时序图、类图、用例图、活动图等常见工程图。
 
