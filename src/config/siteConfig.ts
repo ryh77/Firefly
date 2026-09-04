@@ -46,7 +46,7 @@ export const siteConfig: SiteConfig = {
 	subtitle: "记录技术学习、项目实践和经验分享。",
 
 	// 站点 URL
-	site_url: "http://localhost:4321",
+	site_url: "https://blog.ryh77.workers.dev",
 
 	// 站点描述
 	description:
