@@ -1,7 +1,7 @@
 ---
 title: "Java 项目里 DTO、VO、Entity 来回转换太烦？一个 ConvertUtils 工具类搞定大部分场景"
 published: 2025-08-03
-description: "分享一个基于 Jackson ObjectMapper 封装的 ConvertUtils 类型转换工具类，用来处理 DTO、VO、Entity 单对象转换、列表转换和复制时忽略字段等常见场景。"
+description: "整理一个可以直接拿走用的 ConvertUtils 类型转换工具类，用来处理 DTO、VO、Entity 单对象转换、列表转换和复制时忽略字段等常见场景。"
 image: ""
 tags: ["Java", "Spring Boot", "Jackson", "工具类", "对象转换"]
 category: "Java"
@@ -12,16 +12,34 @@ slug: convert-utils-type-conversion
 
 ## 目录
 
-- 一、为什么会写这个工具类
-- 二、Spring 自带转换方式哪里不太够用
-- 三、为什么没有直接引入 Hutool 这类外部工具
-- 四、使用前需要准备哪些依赖
-- 五、ConvertUtils 的核心思路
-- 六、几个常见使用场景
-- 七、使用时要注意的点
-- 八、完整源码
+- 一、先说结论：这篇文章能解决什么问题
+- 二、一个真实开发场景：对象为什么要来回转
+- 三、直接手写 set/get 有什么问题
+- 四、Spring 自带转换方式为什么不够顺手
+- 五、为什么没有直接引入 Hutool 这类工具
+- 六、使用前需要准备哪些依赖
+- 七、ConvertUtils 的核心实现
+- 八、实际使用场景
+- 九、使用时要注意的边界
+- 十、完整源码
+- 总结
 
-## 一、为什么会写这个工具类
+## 一、先说结论：这篇文章能解决什么问题
+
+看完这篇文章，你可以拿到一个轻量的对象转换工具类，主要解决下面几类高频问题：
+
+| 问题 | 解决方式 |
+| --- | --- |
+| Entity 转 VO 写一堆 `set/get` | 用 `entityToModel` |
+| `List<Entity>` 转 `List<VO>` 还要手动循环 | 用 `entityListToModelList` |
+| 复制对象时不想带 `id`、审计字段 | 用忽略字段版本 |
+| 不想引入 Hutool 这类外部依赖 | 基于项目已有 Jackson 封装 |
+
+这篇文章不是专门讲概念，而是整理一个可以直接复制到项目里改造使用的 `ConvertUtils`。前面先说使用场景和取舍，中间讲核心实现，最后给完整源码。
+
+<mark>如果你的项目里经常出现 DTO、VO、Entity 互转，这个工具类可以先解决 80% 的重复转换代码。</mark>
+
+## 二、一个真实开发场景：对象为什么要来回转
 
 在后端项目里，DTO、VO、Entity 这几个对象基本绕不开。数据库查出来的是 `Entity`，接口返回给前端时通常要转成 `VO`；前端提交的是 `DTO`，真正落库前又要转成 `Entity`。
 
@@ -31,6 +49,18 @@ slug: convert-utils-type-conversion
 前端请求 DTO  ->  Service 业务处理  ->  Entity 入库
 数据库 Entity ->  Service 业务组装  ->  VO 返回前端
 ```
+
+这时候再看 DTO、VO、Entity 的分工就比较自然：
+
+| 对象 | 常见位置 | 主要作用 |
+| --- | --- | --- |
+| DTO | Controller 入参、Service 入参 | 接收前端提交的数据 |
+| Entity | DAO、Mapper、数据库交互 | 对应数据库表结构 |
+| VO | Controller 返回值 | 返回给前端展示的数据 |
+
+分层清楚以后，对象之间的转换就会变成日常开发里的固定动作。字段少的时候不明显，接口和表多起来以后，这类重复代码会越来越多。
+
+## 三、直接手写 set/get 有什么问题
 
 如果字段少还好，手写几行 `set/get` 就结束了：
 
@@ -43,9 +73,18 @@ userVO.setPhone(userEntity.getPhone());
 
 但项目一大，这种代码就会到处都是。字段改名时还很容易漏，最后接口看着没报错，实际返回的数据却少了一块。
 
+手写转换最大的问题不是写一两次麻烦，而是它会在项目里反复出现：
+
+| 问题 | 影响 |
+| --- | --- |
+| 重复代码多 | 每个接口都要写一遍相似转换逻辑 |
+| 字段变更容易漏 | Entity 或 VO 改字段后，转换代码可能没有同步改 |
+| 列表转换更啰嗦 | `List<Entity>` 转 `List<VO>` 还要额外循环 |
+| 复制对象不灵活 | 新增复制时经常要排除 `id`、`createTime` 这类字段 |
+
 <mark>所以这个 ConvertUtils 的目标不是“大而全”，而是把项目里高频、重复的对象转换统一掉。</mark>
 
-## 二、Spring 自带转换方式哪里不太够用
+## 四、Spring 自带转换方式为什么不够顺手
 
 Spring 里其实也有转换工具，比如 `BeanUtils.copyProperties`、`ConversionService`。它们不是不能用，只是放到 DTO、VO、Entity 大量互转的场景里，没那么顺手。
 
@@ -58,7 +97,7 @@ Spring 里其实也有转换工具，比如 `BeanUtils.copyProperties`、`Conver
 
 这里选择 Jackson 的 `ObjectMapper.convertValue`，主要是因为 Spring Boot Web 项目本来就带 Jackson。**不需要额外引入一套转换框架，还能复用项目里的 JSON 配置。**
 
-## 三、为什么没有直接引入 Hutool 这类外部工具
+## 五、为什么没有直接引入 Hutool 这类工具
 
 很多人第一反应可能是：Hutool、MapStruct、Dozer 不是都有类似能力吗？
 
@@ -75,7 +114,7 @@ Spring 里其实也有转换工具，比如 `BeanUtils.copyProperties`、`Conver
 
 所以最后选择自己封装 `ConvertUtils`：底层用项目已有的 Jackson，上层只暴露几个简单方法。
 
-## 四、使用前需要准备哪些依赖
+## 六、使用前需要准备哪些依赖
 
 这个工具类主要依赖三块东西：
 
@@ -156,7 +195,7 @@ public class SpringUtils implements ApplicationContextAware {
 
 **当前项目里为了调用方便，把方法都做成了 `static`，所以采用了 `SpringUtils` 这种写法。**
 
-## 五、ConvertUtils 的核心思路
+## 七、ConvertUtils 的核心实现
 
 ### 1. 延迟获取 ObjectMapper
 
@@ -262,7 +301,7 @@ UserEntity newUser = ConvertUtils.entityToModel(oldUser, UserEntity.class,
         "id", "createBy", "createTime", "updateBy", "updateTime");
 ```
 
-## 六、几个常见使用场景
+## 八、实际使用场景
 
 | 场景 | 写法 |
 | --- | --- |
@@ -277,7 +316,7 @@ ProjectEntity newProject = ConvertUtils.entityToModel(oldProject, ProjectEntity.
         "id", "createBy", "createTime", "updateBy", "updateTime");
 ```
 
-## 七、使用时要注意的点
+## 九、使用时要注意的边界
 
 这个工具类不是万能映射器，用的时候注意几个边界：
 
@@ -291,12 +330,12 @@ ProjectEntity newProject = ConvertUtils.entityToModel(oldProject, ProjectEntity.
 
 <mark>我的习惯是：普通字段交给工具类，带业务含义的字段自己写清楚。</mark>
 
-## 八、完整源码
+## 十、完整源码
 
 下面是去掉复杂泛型 List 方法后的版本，覆盖平时最常用的几个转换场景。
 
 ```java
-package com.icdt.common.utils;
+package com.example.common.utils;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.slf4j.Logger;

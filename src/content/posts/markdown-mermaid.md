@@ -1,26 +1,46 @@
 ---
-title: Markdown Mermaid 图表
-published: 1970-01-01
+title: Mermaid 图表速成方法与使用记录
+published: 2026-04-21
 pinned: false
-description: 一个包含 Mermaid 的 Markdown 博客文章简单示例。
-tags: [Markdown, 博客, Mermaid, Firefly]
-category: 文章示例
+description: 记录 Mermaid 在技术文档、流程说明和项目复盘中的常用图表写法，方便后续按需复制和调整。
+tags: [Mermaid, Markdown, 图表, 文档]
+category: 工具
 slug: markdown-mermaid
-series: "Firefly 功能示例2"
-seriesOrder: 3
 ---
-## Markdown 中 Mermaid 图表完整指南
+
+## Mermaid 图表速成方法与使用记录
 
 本文演示如何在 Markdown 文档中使用 Mermaid 创建各种复杂图表，包括流程图、时序图、ER 图、类图、状态图、XY 图、甘特图、思维导图等。
 
-> Mermaid 图表由 [Merman](https://github.com/Latias94/merman) 实现。Firefly 在 Astro 构建阶段生成亮色和深色两套静态 SVG，无需在浏览器中加载 Mermaid 渲染运行时。可以前往 [Merman Playground](http://frankorz.com/merman/) 实时编辑语法并预览渲染结果。
+Mermaid 的优势和 PlantUML 类似，都是用文本描述图表。**图表源码可以跟文章一起提交到 Git**，后续调整流程、字段或者任务阶段时，可以直接看到每一次图表内容的变化。
+
+<mark>如果只是想快速表达流程、时序、数据关系和项目计划，Mermaid 的上手成本很低，适合直接写在 Markdown 文档里。</mark>
+
+## 最小源码示例
+
+文章中可以这样写 Mermaid 源码：
+
+````md
+```mermaid
+graph TD
+    A[开始] --> B{是否通过}
+    B -->|是| C[继续处理]
+    B -->|否| D[返回修改]
+```
+````
+
+对应渲染效果如下：
+
+```mermaid
+graph TD
+    A[开始] --> B{是否通过}
+    B -->|是| C[继续处理]
+    B -->|否| D[返回修改]
+```
 
 ## 流程图示例
 
 流程图非常适合表示流程或算法步骤。
-
-
-
 
 ```mermaid
 graph TD
@@ -233,7 +253,7 @@ gantt
 
 ```mermaid
 mindmap
-  root((Firefly))
+  root((技术文档))
     内容
       技术文章
       生活记录
@@ -244,7 +264,7 @@ mindmap
     工程
       Astro
       Svelte
-      Merman
+      Markdown
 ```
 
 ## 时间线示例
@@ -253,13 +273,13 @@ mindmap
 
 ```mermaid
 timeline
-    title Firefly 演进时间线
-    2024 : 建立博客
-         : 完成基础主题
-    2025 : 加入搜索与图库
-         : 完善内容系统
-    2026 : 升级 Astro 7
-         : 使用 Merman 渲染图表
+    title 技术文档迭代时间线
+    2024 : 建立文档目录
+         : 沉淀常用模板
+    2025 : 补充流程图与时序图
+         : 完善项目复盘内容
+    2026 : 统一图表写法
+         : 通过 Git 追踪图表变更
 ```
 
 ## 用户旅程图示例
@@ -304,12 +324,12 @@ gitGraph
 kanban
   todo[待办]
     task1[整理需求]
-    task2[准备示例]
+    task2[补充图表源码]
   doing[进行中]
-    task3[接入 Merman]
+    task3[校对文档内容]
   done[已完成]
-    task4[服务端渲染]
-    task5[亮暗主题]
+    task4[流程图整理]
+    task5[时序图整理]
 ```
 
 ## Sankey 图示例
@@ -328,8 +348,8 @@ Post detail,External shares,180
 
 ## 总结
 
-Mermaid 是在 Markdown 文档中创建各种类型图表的强大工具。本文演示了流程图、时序图、ER 图、类图、状态图、XY 图、饼图、甘特图、思维导图、时间线、用户旅程图、Git 图、看板和 Sankey 图。这些图表可以帮助您更清晰地表达复杂的概念、流程和数据结构。
+Mermaid 是在 Markdown 文档中创建各种类型图表的实用工具。本文演示了流程图、时序图、ER 图、类图、状态图、XY 图、饼图、甘特图、思维导图、时间线、用户旅程图、Git 图、看板和 Sankey 图。这些图表可以帮助我们更清晰地表达复杂的概念、流程和数据结构。
 
-要使用 Mermaid，只需在代码块中指定 mermaid 语言，并使用简洁的文本语法描述图表。图表会在构建时自动渲染为 SVG，无需客户端 JavaScript 加载。
+要使用 Mermaid，只需在代码块中指定 `mermaid` 语言，并使用简洁的文本语法描述图表。**建议把重要图表和文档一起提交到 Git**，这样后续调整需求、流程或数据结构时，可以通过提交记录回看图表的迭代过程。
 
-可以前往 [Merman Playground](http://frankorz.com/merman/) 尝试更多语法，再将图表代码粘贴到文章中。
+如果后续需要补充更多图表，可以优先从流程图、时序图和 ER 图开始，这三类最常用于需求说明、详细设计和项目复盘。
