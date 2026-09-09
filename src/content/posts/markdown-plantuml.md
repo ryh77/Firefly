@@ -3,7 +3,7 @@ title: 画 PlantUML 的速成方法与版本追溯
 published: 2026-04-22
 description: 记录 PlantUML 的快速上手方法，以及如何通过 Git 管理 puml 源码来查看图表迭代过程。
 tags: [PlantUML, Markdown, UML, 文档]
-category: 工具
+category: 画图工具
 slug: markdown-plantuml
 ---
 

@@ -4,7 +4,7 @@ published: 2026-04-21
 pinned: false
 description: 记录 Mermaid 在技术文档、流程说明和项目复盘中的常用图表写法，方便后续按需复制和调整。
 tags: [Mermaid, Markdown, 图表, 文档]
-category: 工具
+category: 画图工具
 slug: markdown-mermaid
 ---
 
