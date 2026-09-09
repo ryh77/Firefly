@@ -88,6 +88,55 @@ sequenceDiagram
     end
 ```
 
+下面是同一流程的 PlantUML 版本，方便根据个人情况看对应图片代码：
+
+```plantuml
+@startuml
+title 大数据导出：优化前后流程对比
+
+autonumber
+skinparam shadowing false
+skinparam roundcorner 12
+skinparam sequence {
+    ArrowColor #64748B
+    LifeLineBorderColor #94A3B8
+    LifeLineBackgroundColor #F8FAFC
+    ParticipantBorderColor #64748B
+    ParticipantBackgroundColor #E2E8F0
+    ParticipantFontColor #0F172A
+    ParticipantPadding 18
+    BoxPadding 10
+    MessageAlign center
+    ResponseMessageBelowArrow true
+}
+
+participant F as "前端"
+participant A as "全量拉取接口"
+database D as "数据库"
+collections R as "导出目录"
+
+group 优化前
+    F -> A : 请求全量拉取
+    A -> D : 一次性查询多张表
+    D --> A : 返回全部结果
+    A -> A : 合并 allData
+    A -> A : 统一写 JSON
+    F -> A : 再逐个下载 XSD
+end
+
+group 优化后
+    F -> A : 请求全量拉取
+    loop 滑动窗口预取 3 张表
+        A -> D : 按批次查询
+        D --> A : 返回当前批次
+        A -> R : 边查边写 JSON / XSD
+        A -> A : 释放当前批次对象
+    end
+    A --> F : 返回导出结果
+end
+@enduml
+```
+
 ### 单表体积也不小
 
 有些表的行数已经接近 50 万条。即使像截图里这张表只有 1819 条，体积也不小：
