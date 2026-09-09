@@ -44,5 +44,7 @@
   "src:content/posts/images/easypoi-word-template-export/easypoi-word-template-export-03.png": "46484a3d3f41434244",
   "src:content/posts/images/easypoi-word-template-export/easypoi-word-template-export-02.png": "f9f9faececeaf9f9fa",
   "src:content/posts/images/easypoi-word-template-export/easypoi-word-template-export-01.png": "f2f1f1f3f3f3f8f8f8",
-  "src:content/posts/images/sliding-window-export-json-oom/table-size-stat.png": "f0f0f0f7f7f7f2f2f2"
+  "src:content/posts/images/sliding-window-export-json-oom/table-size-stat.png": "f0f0f0f7f7f7f2f2f2",
+  "src:content/posts/images/large-json-field-page-api-performance-optimization/redis-big-key-strlen.png": "3a454a3a444a253137",
+  "src:content/posts/images/large-json-field-page-api-performance-optimization/http的gzip标识.png": "f1f1f3f7f9fbfcfcfc"
 }
