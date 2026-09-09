@@ -1,9 +1,9 @@
 ---
-title: "MySQL 报 Out of sort memory？一次 order by 分页查询排查记录"
-published: 2026-07-02
-description: "记录一次 MySQL 执行多条件分页查询时，因为 order by create_time desc 触发 Out of sort memory 的排查过程和优化思路。"
+title: "MySQL 8.0.20+ 排序内存不足排查：dynamic_fields 大字段触发 1038"
+published: 2026-08-02
+description: "记录一次 MySQL 8.0.20+ 分页查询出现 Out of sort memory 1038 的排查过程，重点说明大字段、filesort、延迟查询和会话级兜底方案。"
 image: ""
-tags: ["MySQL", "SQL优化", "索引", "分页查询", "排查记录", "Bug"]
+tags: ["MYSQL", "SQL优化", "索引", "性能优化", "分页查询", "排查记录"]
 category: "问题排查"
 draft: false
 lang: "zh_CN"
@@ -12,241 +12,279 @@ slug: mysql-out-of-sort-memory
 
 ## 目录
 
-- 一、先说结论：这个报错主要怎么处理
-- 二、问题场景：分页查询突然报排序内存不足
-- 三、原来的 SQL 问题在哪里
-- 四、常见处理方案怎么选
-- 五、优先推荐的优化方式
-- 六、临时兜底方案
-- 七、使用时要注意的边界
+- 一、现象：分页查询报 `Out of sort memory 1038`
+- 二、误区：不要一上来调大 `sort_buffer_size`
+- 三、底层原理：MySQL 8.0.20+ 的 `packed addons`
+- 四、复现条件：大字段、`filesort` 与 `LIMIT` 的关系
+- 五、解决方案：按优先级处理
+- 六、拓展：游标分页能解决什么问题
 - 总结
 
-## 一、先说结论：这个报错主要怎么处理
+## 一、现象：分页查询报 `Out of sort memory 1038`
 
-这次遇到的核心报错是：
+当时是一个列表查询接口，需要按一批业务 ID 过滤数据，再按照创建时间倒序分页返回。接口执行时报错：
 
 ```text
 Out of sort memory, consider increasing server sort buffer size
 SQL state [HY001]; error code [1038]
 ```
 
-结论先放前面：
-
-| 问题 | 结论 |
-| --- | --- |
-| 是不是 `IN` 条件太多直接导致的 | 不完全是 |
-| 真正触发点是什么 | 命中数据量大，还要 `ORDER BY create_time DESC` 排序 |
-| 删掉 `order by` 为什么不报错 | 少了排序内存消耗 |
-| 最优先怎么处理 | 建合适索引、缩小结果集、优化分页 |
-| 能不能直接调大 `sort_buffer_size` | 可以临时兜底，但不建议长期依赖 |
-
-<mark>这个问题本质不是简单的数据库“坏了”，而是一次分页查询需要排序的数据太多，MySQL 分配给排序的内存不够用了。</mark>
-
-## 二、问题场景：分页查询突然报排序内存不足
-
-当时是一个列表查询接口，后端按一批结构 ID 查询数据，并按创建时间倒序分页返回。
-
-简化后的 SQL 类似这样：
+简化后的 SQL 如下：
 
 ```sql
 SELECT
     id,
-    project_id,
-    project_structure_id,
+    group_id,
     name,
-    type,
     create_time,
-    update_time,
-    dynamic_fields,
-    project_json_data
+    dynamic_fields
 FROM business_data
-WHERE project_structure_id IN (?, ?, ?, ?, ?)
-ORDER BY create_time DESC
-LIMIT ?, ?;
-```
-
-接口报错里比较关键的信息是：
-
-```text
-Error code: 1038
-SQL state: HY001
-Cause: Out of sort memory, consider increasing server sort buffer size
-```
-
-一开始容易以为是 `IN` 后面的 ID 太多，但实际排查发现，**去掉 `ORDER BY create_time DESC` 后就不报错了**。
-
-这说明真正让数据库扛不住的地方，是过滤后还要对大量数据做排序。
-
-## 三、原来的 SQL 问题在哪里
-
-这类 SQL 看起来很常见，但数据量一上来就容易出问题。
-
-```text
-WHERE 过滤 -> ORDER BY 排序 -> LIMIT 分页
-```
-
-MySQL 执行时不是先拿到当前页再排序，而是要先把符合条件的数据按 `create_time` 排好，再返回当前页。
-
-如果 `project_structure_id IN (...)` 命中了几万甚至十几万行，再叠加下面几个因素，就很容易触发排序内存不足：
-
-- `ORDER BY create_time DESC` 没有合适索引支撑
-- 查询字段比较多，还包含 JSON 这类大字段
-- 分页 offset 较深，数据库要处理更多中间结果
-- 单次请求命中范围太大，没有时间范围或其他过滤条件
-
-<mark>`LIMIT 20` 不代表数据库只处理 20 条数据。前面排序的数据量如果很大，照样可能把排序内存打满。</mark>
-
-## 四、常见处理方案怎么选
-
-遇到这个报错，常见处理方式大概有几类：
-
-| 方案 | 适合场景 | 局限 |
-| --- | --- | --- |
-| 去掉 `order by` | 临时确认问题点 | 结果顺序不稳定，通常不符合业务需求 |
-| 调大 `sort_buffer_size` | 临时救急 | 每个连接都会占用，连接多时风险更高 |
-| 加索引 | 常规查询优化 | 需要结合 `EXPLAIN` 看是否真正用上 |
-| 缩小查询范围 | 业务允许按条件过滤 | 需要前后端一起约束查询条件 |
-| 游标分页 | 大数据量分页 | 改造成本比普通分页高 |
-| 列表页减少大字段 | 列表不需要完整详情 | 详情页需要再查一次 |
-
-我的处理顺序一般是：**先看执行计划，再加索引和缩小结果集，最后才考虑调数据库参数。**
-
-## 五、优先推荐的优化方式
-
-### 1. 给过滤和排序字段建索引
-
-如果查询条件主要是 `project_structure_id`，并且按 `create_time` 倒序，可以先考虑联合索引：
-
-```sql
-CREATE INDEX idx_structure_create_time
-ON business_data(project_structure_id, create_time DESC);
-```
-
-如果业务上经常跨多个结构 ID 做全局时间倒序，也可以结合数据分布评估下面这种索引：
-
-```sql
-CREATE INDEX idx_create_time_structure
-ON business_data(create_time DESC, project_structure_id);
-```
-
-这两个索引不是随便都加，建议用 `EXPLAIN` 看实际执行计划：
-
-```sql
-EXPLAIN
-SELECT id, project_id, project_structure_id, name, create_time
-FROM business_data
-WHERE project_structure_id IN (?, ?, ?, ?, ?)
+WHERE group_id IN (?, ?, ?, ?, ?)
 ORDER BY create_time DESC
 LIMIT 0, 20;
 ```
 
-重点看有没有 `Using filesort`。如果还在 filesort，就说明排序没有完全靠索引解决，还需要继续调整查询方式或索引顺序。
+一开始容易把问题归因于 `IN` 条件，或者认为 `LIMIT 20` 只会处理 20 条数据。实际排查发现，**去掉 `ORDER BY` 后不再报错**，说明触发点在排序阶段。
 
-### 2. 列表页不要一次查太多字段
+这条 SQL 还有一个容易被忽略的字段：`dynamic_fields`。它原本是 `JSON` 类型，前面为了保留原始 JSON 内容和 key 顺序，改成了 `LONGBLOB`。这个调整解决了 JSON 顺序问题，但也让列表查询带上了一个可能很大的字段。关于 JSON 字段顺序变化的背景，可以参考<a href="../mysql-json-key-order-normalization/" target="_blank" rel="noopener noreferrer">MySQL JSON 类型字段为什么会改变字段顺序？一次排查记录</a>。
 
-原 SQL 里查了动态字段、完整 JSON 数据这类大字段。列表页如果只是展示基础信息，可以先只查列表需要的字段：
+<mark>这次问题的核心不是单纯的分页参数，而是大字段和 `filesort` 叠加后，排序内存无法承载。</mark>
+
+## 二、误区：不要一上来调大 `sort_buffer_size`
+
+看到错误信息后，最直接的反应通常是全局调大排序缓冲区。这个方向不适合直接作为长期方案，也不建议在线上直接修改全局配置。`sort_buffer_size` 是会话级排序缓冲区，发生排序的连接会按照这个参数申请内存。并发查询较多时，实际内存消耗会随着连接数累加，还要叠加连接本身的其他缓冲区。
+
+如果线上必须临时恢复，可以只对当前会话设置：
+
+```sql
+SET SESSION sort_buffer_size = 4194304;
+```
+
+注意两点：
+
+- 这个参数只能缓解内存不足，不能消除 `filesort` 和大字段读取。
+- 使用连接池时，会话参数可能被复用到下一次请求，临时修改后要确认连接归还前已经恢复。
+
+所以排查顺序应该是：**先确认是否发生 `filesort`，再优化索引和查询字段，最后才考虑会话级参数兜底。**
+
+## 三、底层原理：MySQL 8.0.20+ 的 `packed addons`
+
+这个报错背后有一个 MySQL 8.0.20 引入的版本相关行为。
+
+MySQL 在 filesort 中引入了 `packed addons` 优化。对于 `JSON`、`GEOMETRY` 等大字段，内部处理方式接近 `LONGBLOB`。在某些排序路径中，排序记录不只是保存主键或行指针，还可能携带查询结果中的大字段内容。
+
+因此，触发点不一定是“有没有把 JSON 字段写进 `ORDER BY`”。只要大字段被 `SELECT` 出来，并且查询需要走这条排序路径，**单行内容很大的 JSON 也可能进入 `sort_buffer`**。内存不足时会直接报 `1038`，不能简单按“内存不够就自动降级到磁盘 filesort”来理解。
+
+这里需要区分业务字段和官方版本行为：
+
+- 官方版本说明重点描述的是 `JSON`、`GEOMETRY` 在排序中的处理变化。
+- 当前业务中的 `dynamic_fields` 已经是 `LONGBLOB`，原因是之前需要保留 JSON 原始内容和字段顺序。
+- `LONGBLOB` 本身就是大字段，虽然不应把它和官方版本变化完全等同，但它会明显增大查询结果行宽，放大排序和回表时的内存压力。
+
+MySQL 8.0.28 对这部分排序内存使用又做过改进，所以不同小版本的表现可能不同。遇到类似问题时，除了看 SQL，也要确认数据库的准确版本。
+
+相关官方说明：
+
+- [MySQL 8.0.20 Release Notes](https://dev.mysql.com/doc/relnotes/mysql/8.0/en/news-8-0-20.html)
+- [MySQL 8.0.28 Release Notes](https://dev.mysql.com/doc/relnotes/mysql/8.0/en/news-8-0-28.html)
+- [MySQL `sort_buffer_size` 配置说明](https://dev.mysql.com/doc/refman/8.0/en/server-system-variables.html#sysvar_sort_buffer_size)
+
+## 四、复现条件：大字段、`filesort` 与 `LIMIT` 的关系
+
+要复现这类问题，通常需要同时满足几个条件：
+
+1. 查询结果中包含较大的 `JSON`、`LONGBLOB` 或其他大字段。
+2. `ORDER BY` 没有被合适的索引满足，执行计划出现 `Using filesort`。
+3. 过滤条件命中较多数据，排序记录的总大小超过可用排序内存。
+
+例如：
 
 ```sql
 SELECT
     id,
-    project_id,
-    project_structure_id,
-    name,
-    type,
-    create_time
-FROM business_data
-WHERE project_structure_id IN (?, ?, ?, ?, ?)
+    create_time,
+    payload
+FROM sort_memory_demo
+WHERE group_id IN (?, ?, ?)
 ORDER BY create_time DESC
-LIMIT ?, ?;
+LIMIT 0, 20;
 ```
 
-详情页再根据主键查完整 JSON：
+先检查执行计划：
 
 ```sql
-SELECT dynamic_fields, project_json_data
+EXPLAIN
+SELECT
+    id,
+    create_time,
+    payload
+FROM sort_memory_demo
+WHERE group_id IN (?, ?, ?)
+ORDER BY create_time DESC
+LIMIT 0, 20;
+```
+
+<mark>即使 `LIMIT 0, 20` 只返回 20 条，MySQL 也可能先对大量符合条件的数据排序，再截取当前页。</mark>
+
+所以，`LIMIT` 和 `OFFSET` 不是这个报错的必要条件。`OFFSET` 越深通常会让分页更慢，但本次 `1038` 的关键仍然是**大字段进入排序路径**。即使是第一页，也可能触发。
+
+## 五、解决方案：按优先级处理
+
+### 1. 建立索引，优先消除 `filesort`
+
+如果主要过滤字段是 `group_id`，并且经常按照 `create_time` 倒序查询，可以先评估联合索引：
+
+```sql
+CREATE INDEX idx_business_group_time_id
+    ON business_data (group_id, create_time DESC, id DESC);
+```
+
+`id` 放在最后是为了在 `create_time` 相同时提供稳定的第二排序条件。索引不能直接照搬，尤其是 `IN` 包含多个值时，MySQL 仍可能需要合并结果后排序，**是否消除 `filesort` 必须以 `EXPLAIN` 为准**。
+
+```sql
+EXPLAIN
+SELECT
+    id,
+    group_id,
+    name,
+    create_time
+FROM business_data
+WHERE group_id IN (?, ?, ?, ?, ?)
+ORDER BY create_time DESC, id DESC
+LIMIT 0, 20;
+```
+
+### 2. 列表查询不要使用 `SELECT *`
+
+如果列表页不需要展示完整动态字段，就不要在排序查询中读取 `dynamic_fields`：
+
+```sql
+SELECT
+    id,
+    group_id,
+    name,
+    create_time
+FROM business_data
+WHERE group_id IN (?, ?, ?, ?, ?)
+ORDER BY create_time DESC, id DESC
+LIMIT 0, 20;
+```
+
+详情页需要时，再按主键查询大字段：
+
+```sql
+SELECT
+    id,
+    dynamic_fields
 FROM business_data
 WHERE id = ?;
 ```
 
-这样不一定单独解决排序问题，但能明显降低列表查询的 IO、网络传输和中间结果处理压力。
+这不仅能减少排序阶段的内存压力，也能降低磁盘读取、网络传输和 Java 对象创建成本。
 
-### 3. 限制查询范围
+### 3. 延迟查询：先分页主键，再查询大字段
 
-如果前端分页可以控制，就不要允许一次拉特别大的范围。
+如果当前页面确实需要返回 `dynamic_fields`，可以把查询拆成两步。这是这次问题更关键的处理方式。
 
-常见做法：
-
-- 限制 `pageSize` 最大值，比如最多 50 条
-- `IN` 条件过长时分批处理
-- 增加时间范围，比如只查最近一段时间
-- 增加更明确的业务过滤条件，减少命中行数
-
-示例：
+第一步只查询排序和分页需要的小字段：
 
 ```sql
-SELECT id, project_id, project_structure_id, name, create_time
+SELECT
+    id,
+    create_time
 FROM business_data
-WHERE project_structure_id IN (?, ?, ?, ?, ?)
-  AND create_time >= '2026-01-01 00:00:00'
-ORDER BY create_time DESC
+WHERE group_id IN (?, ?, ?, ?, ?)
+ORDER BY create_time DESC, id DESC
 LIMIT 0, 20;
 ```
 
-## 六、临时兜底方案
+假设第一步返回的主键顺序是：
 
-如果线上已经报错，需要先临时恢复，可以查看并适当调大 `sort_buffer_size`。
-
-```sql
-SHOW VARIABLES LIKE 'sort_buffer_size';
+```text
+105, 98, 87, 76, ...
 ```
 
-临时调大示例：
+第二步再根据这一页的主键查询完整数据：
 
 ```sql
-SET GLOBAL sort_buffer_size = 4194304;
-```
-
-这里要特别注意：**`sort_buffer_size` 是每个连接排序时可能使用的内存，不是全局只占一份。**
-
-如果数据库连接数比较多，把这个值调得过大，可能会带来新的内存风险。所以它更适合临时兜底，不适合作为根治方案。
-
-## 七、使用时要注意的边界
-
-这类问题后面再遇到，可以按下面几个点快速判断：
-
-| 检查点 | 说明 |
-| --- | --- |
-| 去掉 `ORDER BY` 是否恢复 | 用来判断是不是排序触发 |
-| `EXPLAIN` 是否出现 `Using filesort` | 判断是否走了额外排序 |
-| 命中行数是否过大 | `IN` 条件不多也可能命中很多行 |
-| 列表页是否查了大字段 | JSON、TEXT、BLOB 尽量放详情查询 |
-| 是否存在深分页 | offset 越深，中间处理成本越高 |
-
-如果分页数据量特别大，可以考虑游标分页：
-
-```sql
-SELECT id, project_id, project_structure_id, name, create_time
+SELECT
+    id,
+    group_id,
+    name,
+    create_time,
+    dynamic_fields
 FROM business_data
-WHERE project_structure_id IN (?, ?, ?, ?, ?)
-  AND create_time < ?
-ORDER BY create_time DESC
+WHERE id IN (?, ?, ?, ?, ...);
+```
+
+第二条 SQL 不再执行 `ORDER BY`，大字段只会读取当前页的 20 条记录。由于 `IN` 查询不保证返回顺序，Service 层需要按照第一步的主键顺序重新组装结果：
+
+```java
+Map<Long, DataRow> rowMap = new HashMap<>();
+for (DataRow row : detailRows) {
+    rowMap.put(row.getId(), row);
+}
+
+List<DataRow> orderedRows = new ArrayList<>();
+for (Long id : orderedIds) {
+    DataRow row = rowMap.get(id);
+    if (row != null) {
+        orderedRows.add(row);
+    }
+}
+```
+
+<mark>延迟查询的重点是：排序阶段只处理小字段，排序完成后才读取 `dynamic_fields`，从查询路径上绕开大字段进入排序缓冲区。</mark>
+
+### 4. 会话级别调大 `sort_buffer_size`，只做应急
+
+如果索引和 SQL 改造还没来得及上线，可以在确认内存余量后对当前会话临时设置：
+
+```sql
+SET SESSION sort_buffer_size = 4194304;
+```
+
+不建议直接全局调大，更不建议把它当成根治方案。**如果 SQL 仍然把大字段带进 filesort，缓冲区调得越大，单个连接的内存风险也越高。**
+
+## 六、拓展：游标分页能解决什么问题
+
+游标分页适合解决深分页的性能问题，但**不能直接解决本次 `Out of sort memory 1038`**。
+
+普通分页：
+
+```sql
+LIMIT 100000, 20;
+```
+
+页码很深时，数据库需要跳过大量记录。游标分页会把上一页最后一条记录的排序值传给下一页：
+
+```sql
+SELECT
+    id,
+    create_time
+FROM business_data
+WHERE group_id IN (?, ?, ?, ?, ?)
+  AND (
+      create_time < ?
+      OR (create_time = ? AND id < ?)
+  )
+ORDER BY create_time DESC, id DESC
 LIMIT 20;
 ```
 
-下一页带上上一页最后一条数据的 `create_time`，避免深分页带来的额外开销。
+如果这一页仍然需要 `dynamic_fields`，依然应该采用前面的**延迟查询**：第一步只取当前页主键，第二步再按主键查询大字段。
+
+<mark>游标分页解决的是 `OFFSET` 越深越慢；延迟查询解决的是大字段进入排序阶段。两者是不同问题，不能混用结论。</mark>
 
 ## 总结
 
-这次报错看起来像数据库内存问题，但真正要处理的是 SQL 查询方式。
+这次 `Out of sort memory 1038` 的排查结论可以概括为：
 
-**`IN` 条件只是扩大了命中范围，`ORDER BY create_time DESC` 才是排序内存消耗的关键触发点。**
+1. 先用 `EXPLAIN` 确认是否出现 `Using filesort`。
+2. MySQL 8.0.20 的 `packed addons` 让 JSON 等大字段可能进入排序载荷，不能只看 `ORDER BY` 中有没有 JSON。
+3. `dynamic_fields` 虽然已经从 JSON 改成了 `LONGBLOB`，但它仍然是一个可能很大的字段，不能在列表排序 SQL 中无条件查询。
+4. 优先通过索引消除 `filesort`，其次减少列表字段；必须返回大字段时，使用“先查主键、再查详情”的延迟查询。
+5. `sort_buffer_size` 只在当前会话临时调大，不要直接全局修改。
+6. 游标分页只用于解决深分页慢，不能当作本次 1038 报错的核心方案。
 
-我的建议是：
-
-- 先用 `EXPLAIN` 确认是否 `Using filesort`
-- 给过滤字段和排序字段设计联合索引
-- 列表页只查必要字段，大 JSON 数据放详情页查
-- 控制 `pageSize`、时间范围和查询条件
-- `sort_buffer_size` 只做临时兜底，不当长期方案
-
-<mark>分页查询不是加了 `LIMIT` 就一定轻。只要前面需要排序的数据量足够大，MySQL 仍然可能先扛住全部排序成本。</mark>
+<mark>遇到大字段分页查询时，先把排序和大字段读取拆开，通常比单纯扩大数据库内存参数更稳。</mark>

@@ -1,6 +1,6 @@
 ---
 title: "MySQL JSON 类型字段为什么会改变字段顺序？一次排查记录"
-published: 2026-08-12
+published: 2026-07-17
 description: "记录一次前端按 JSON key 顺序渲染表格列头时，发现 MySQL JSON 字段顺序变化的排查过程和处理思路。"
 image: ""
 tags: ["MYSQL", "JSON", "排查记录", "Java", "Bug"]
