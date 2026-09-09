@@ -1,9 +1,9 @@
 ---
-title: "滑动窗口优化全量拉取接口：边查边写 JSON，接口从 20 分钟降到 18 秒"
+title: "滑动窗口优化全量数据拉取：从 20 分钟降到 18 秒"
 published: 2026-07-20
-description: "记录一次全量拉取接口的 OOM 风险优化：从全量查询 allData 再写文件，改成滑动窗口预取、边读数据库边写 JSON 和 ZIP。"
+description: "记录一次离线客户端全量拉取性能优化：通过表级滑动窗口、边查边写 ZIP 和关联文件打包，降低多表查询的内存压力并缩短整体链路。"
 image: ""
-tags: ["Java", "OOM", "性能优化", "滑动窗口", "全量拉取", "接口优化"]
+tags: ["Java", "性能优化", "OOM", "滑动窗口", "全量拉取", "ZIP"]
 category: "性能优化"
 draft: false
 lang: "zh_CN"
@@ -12,296 +12,320 @@ slug: sliding-window-export-json-oom-optimization
 
 ## 目录
 
-- 一、先说结论：这次优化解决了什么
-- 二、问题场景：全量拉取接口为什么容易 OOM
-- 三、原来的写法有什么问题
-- 四、为什么用滑动窗口做折中
-- 五、核心实现思路
-- 六、优化后的效果
-- 七、还没彻底解决的边界
+- 一、先说结论：这次用了什么技术，解决了什么问题
+- 二、什么是滑动窗口
+- 三、真实背景：为什么一次拉取要 20 分钟
+- 四、原来的实现为什么容易 OOM
+- 五、实际怎么优化
+- 六、优化前后流程对比
+- 七、优化后的结果
+- 八、当前方案的边界
 - 总结
 
-## 一、先说结论：这次优化解决了什么
+## 一、先说结论：用了什么技术，解决了什么问题
 
-这次优化主要解决的是一个全量拉取接口的内存和耗时问题。
+这次优化针对的是**离线客户端全量拉取数据**的场景。原实现一次性查询多张业务表，将所有结果合并到 `allData`，生成 JSON 后，客户端还要单独下载关联文件。
 
-| 问题 | 优化前 | 优化后 |
-| --- | --- | --- |
-| 数据查询 | 先把所有表结果合并到 `allData` 大 Map | 按表查询，写完一张表就释放 |
-| 文件写入 | 查完全部数据后再写 JSON 文件 | 边读数据库边写 JSON 文件 |
-| 并发策略 | 多张表一起查，速度快但内存压力大 | 滑动窗口控制，最多预取 3 张表 |
-| XSD 压缩包 | 前端单独拉取多个压缩包 | 后端一起写入文件夹，前端不再单独请求下载 |
-| 接口耗时 | 平均约 20 分钟 | 优化到约 18 秒 |
+本次实际落地了四个改动：
 
-<mark>核心变化：不再把所有表数据都堆到 JVM 内存里，而是用滑动窗口控制预取数量，边查询、边写文件、边释放对象。</mark>
+| 技术 | 解决的问题 |
+| --- | --- |
+| 表级滑动窗口 | 限制同时查询的表数量，降低 JVM 和数据库瞬时压力 |
+| 按表写入 ZIP | 写完一张表就释放这张表的结果 |
+| 管道流上传 ZIP | ZIP 生成和对象存储上传同时进行，减少等待和额外缓存 |
+| 关联文件直接写入 ZIP | 客户端只下载一个 ZIP，不再逐个请求文件 |
 
-## 二、问题场景：全量数据导出为什么容易 OOM
+<mark>本次优化解决的重点是“多表全量聚合造成的内存和耗时问题”，不是单表分页或数据库游标改造。</mark>
 
-当时的全量拉取接口需要从多张表读取数据，再生成 JSON 文件，同时还要处理对应的 XSD 压缩包。这个业务来自某个控制器里的全量拉取接口，真实代码已经脱敏，这里只保留优化思路。
+## 二、什么是滑动窗口
 
-原来的链路大概是这样：
+滑动窗口可以理解成：**限制同时处理的数据量，只保留一个固定大小的“窗口”**。
+
+假设一共有很多张表，但窗口大小设置为 5，那么每次最多只预取 5 张表：
 
 ```text
-查询 29 张表数据 -> 合并到 allData 大 Map -> 写 JSON 文件 -> 前端再逐个拉取 XSD 压缩包
+第一次：表1、表2、表3、表4、表5
+             ↓ 写完表1
+第二次：表2、表3、表4、表5、表6
+             ↓ 写完表2
+第三次：表3、表4、表5、表6、表7
 ```
 
-这套逻辑在数据量不大时能跑，但数据一多，问题就出来了：
+写完表 1 后，窗口向后移动，补进表 6；写完表 2 后，再补进表 7。因为窗口会不断向后移动，所以称为“滑动窗口”。
 
-- 29 张表一起查，数据库压力瞬间变大
-- 所有结果都放进 `allData`，JVM 内存峰值很高
-- JSON 文件写入要等所有数据查完以后才能开始
-- 前端还要额外拉取多个 XSD 压缩包，整体链路很长
+它是一个折中方案：相比全部并发，能降低内存和数据库压力；相比完全串行，又能保留部分查询并发。
 
-实际情况是：这个全量拉取接口本身就要大约 4 分钟；另外还有一部分文件需要前端单独下载，平均一个文件大约 1.5 分钟。十来个文件叠加起来，整体接口链路就接近 20 分钟。
+当前实现的预取数量是 5。这个数字只是当前配置，不是固定答案，实际项目需要结合 JVM 内存、数据库负载和并发请求量压测。
 
-### 处理前后流程对比
+## 三、真实背景：为什么一次拉取要 20 分钟
 
-下面用一张图把优化前后放在一起看，更直观。
+这里不是普通分页，而是离线客户端首次启动或刷新本地数据时，向服务端拉取多张业务表的全量数据。部分表还关联了 Schema 文件，原来由客户端再单独请求下载。
 
-```mermaid
-sequenceDiagram
-    participant F as 前端
-    participant A as 全量拉取接口
-    participant D as 数据库
-    participant R as 导出目录
+实际数据量并不小，其中一张表大约有 50 万条记录，单行数据也可能比较大。
 
-    rect rgb(245, 245, 245)
-        note over F,R: 优化前
-        F->>A: 请求全量拉取
-        A->>D: 一次性查询多张表
-        D-->>A: 返回全部结果
-        A->>A: 合并 allData
-        A->>A: 统一写 JSON
-        F->>A: 再逐个下载 XSD
-    end
+原来的链路是：
 
-    rect rgb(235, 248, 235)
-        note over F,R: 优化后
-        F->>A: 请求全量拉取
-        loop 滑动窗口预取 3 张表
-            A->>D: 按批次查询
-            D-->>A: 返回当前批次
-            A->>R: 边查边写 JSON / XSD
-            A->>A: 释放当前批次对象
-        end
-        A-->>F: 返回导出结果
-    end
+```text
+客户端请求全量数据
+        ↓
+服务端查询多张业务表
+        ↓
+合并所有结果并生成 JSON
+        ↓
+客户端保存数据
+        ↓
+客户端再单独下载多个关联文件
 ```
 
-下面是同一流程的 PlantUML 版本，方便根据个人情况看对应图片代码：
+当时的耗时大致可以拆成三部分：
 
-```plantuml
-@startuml
-title 大数据导出：优化前后流程对比
+| 阶段 | 耗时 |
+| --- | --- |
+| 全量拉取接口本身，包含查询和数据处理 | 约 4 分钟 |
+| 客户端继续单独下载关联文件 | 每个文件平均约 1.5 分钟 |
+| 整体耗时 | 平均接近 20 分钟 |
 
-autonumber
-skinparam shadowing false
-skinparam roundcorner 12
-skinparam sequence {
-    ArrowColor #64748B
-    LifeLineBorderColor #94A3B8
-    LifeLineBackgroundColor #F8FAFC
-    ParticipantBorderColor #64748B
-    ParticipantBackgroundColor #E2E8F0
-    ParticipantFontColor #0F172A
-    ParticipantPadding 18
-    BoxPadding 10
-    MessageAlign center
-    ResponseMessageBelowArrow true
+关联文件平均每个约 1.5 分钟，文件数量较多时，后续下载时间会不断叠加。也就是说，**接口本身慢，客户端还要重复发起文件请求**，最终把整体等待时间拉到了 20 分钟左右。
+
+## 四、原来的实现为什么容易 OOM
+
+原来的核心逻辑可以抽象成：
+
+```java
+Map<String, List<Map<String, Object>>> allData = new LinkedHashMap<>();
+
+for (String tableName : tableNameList) {
+    List<Map<String, Object>> rows = queryTable(tableName);
+    allData.put(tableName, rows);
 }
 
-participant F as "前端"
-participant A as "全量拉取接口"
-database D as "数据库"
-collections R as "导出目录"
-
-group 优化前
-    F -> A : 请求全量拉取
-    A -> D : 一次性查询多张表
-    D --> A : 返回全部结果
-    A -> A : 合并 allData
-    A -> A : 统一写 JSON
-    F -> A : 再逐个下载 XSD
-end
-
-group 优化后
-    F -> A : 请求全量拉取
-    loop 滑动窗口预取 3 张表
-        A -> D : 按批次查询
-        D --> A : 返回当前批次
-        A -> R : 边查边写 JSON / XSD
-        A -> A : 释放当前批次对象
-    end
-    A --> F : 返回导出结果
-end
-@enduml
+writeAllDataToJson(allData);
 ```
 
-### 单表体积也不小
+这意味着所有表查询完成前，结果都会一直挂在 `allData` 中。
 
-有些表的行数已经接近 50 万条。即使像截图里这张表只有 1819 条，体积也不小：
+内存中可能同时存在：
+
+```text
+多张表的 List<Map<String, Object>>
+        + allData 大 Map
+        + JSON 序列化产生的 byte[]
+        + ZIP 和上传过程中的缓冲区
+```
+
+如果一次查询接近 30 张表，其中部分表有几十万条记录，甚至接近 50 万条，内存峰值就会明显增加。
+
+排查时对单表做过体积统计，下面是其中一个结果示例：
 
 ![表体积统计](./images/sliding-window-export-json-oom/table-size-stat.png)
 
-这张表的统计结果大概是：
+数据库中的数据映射成 Java 对象后，还会产生 `Map`、`List`、字段对象和序列化缓冲区等额外开销。因此，**数据库文件大小不等于 JVM 实际需要的内存大小**。
 
-- `COUNT(*) = 1819`
-- `total_bytes = 23958371`
-- `avg_bytes = 13171.1770`
-- `max_bytes = 877753`
+## 五、实际怎么优化
 
-也就是说，条数不算离谱，但单条记录的平均体积已经接近 13KB，最大值也接近 878KB。这样的表如果一次性全量加载，再叠加其他表一起处理，JVM 内存压力就会很明显。
+### 1. 不再使用 `allData` 保存全部结果
 
-## 三、原来的写法有什么问题
-
-原来的核心问题不是“查询慢”这么简单，而是查询、内存、文件写入都串在一起了。
+优化后按表处理：
 
 ```text
-DB 全量读取 -> JVM 保存全部数据 -> 统一写入 JSON -> 前端继续拉取 XSD
+查询当前表
+    ↓
+写入当前表 JSON
+    ↓
+写入当前表关联文件
+    ↓
+当前表处理完成
+    ↓
+继续下一张表
 ```
 
-这里最危险的是 `allData`：
+当前表写入完成后，不再把它放在一个全局大 Map 中等待后续处理。这样内存峰值不再直接跟所有表总数据量绑定。
 
-| 风险点 | 影响 |
-| --- | --- |
-| 所有表结果都进入一个大 Map | JVM 内存峰值不可控 |
-| 写文件前数据不能释放 | GC 没法及时回收大对象 |
-| 表越多、单表越大，风险越高 | 数据量上来后容易 OOM |
-| 前端继续拉取 XSD | 后续耗时继续放大 |
+### 2. 用滑动窗口限制预取数量
 
-<mark>只要全量结果还没写完，`allData` 就会一直占着内存，这就是 OOM 风险的主要来源。</mark>
-
-## 四、为什么用滑动窗口做折中
-
-最直接的优化思路有几个：
-
-| 方案 | 优点 | 问题 |
-| --- | --- | --- |
-| 29 张表全并发查询 | 速度快 | 内存峰值高，数据库压力大 |
-| 完全串行一张张查 | 内存最稳 | 速度可能下降明显 |
-| 一次最多预取 3 张表 | 兼顾速度和内存 | 单表超大时仍有风险 |
-
-最后选择的是第三种：**滑动窗口控制并发预取数量**。
-
-也就是最多同时准备 3 张表的数据。写 ZIP 的线程按顺序消费，写完一张表后，这张表的数据就可以被释放；窗口再继续向后滑动，补下一张表。
-
-```text
-窗口 1：[表1, 表2, 表3] -> 写完表1 -> 释放表1
-窗口 2：[表2, 表3, 表4] -> 写完表2 -> 释放表2
-窗口 3：[表3, 表4, 表5] -> 继续向后处理
-```
-
-这样不是完全串行，也不会像全并发那样把 29 张表的数据一次性压到内存里。
-
-## 五、核心实现思路
-
-优化后的链路变成这样：
-
-```text
-ZIP 管道流上传 -> 写 ZIP 线程启动 -> 按表查询数据 -> 当前表写入 JSON -> 写入 XSD 文件 -> 释放当前表对象
-```
-
-核心点有三个。
-
-### 1. ZIP 上传继续使用管道流
-
-ZIP 不先完整落到内存里，而是继续用管道流上传到对象存储。
-
-```text
-写 ZIP 线程 -> PipedOutputStream -> PipedInputStream -> 上传对象存储
-```
-
-这样可以避免“整个 ZIP 包先在内存里攒完”的问题。
-
-### 2. 按表写 JSON，不再合并 allData
-
-原来是所有表查询完以后统一放进 `allData`。现在改成按表处理：
+简化后的实现如下：
 
 ```java
-for (String tableName : tableNameList) {
-    List<Map<String, Object>> tableDataList = queryTableData(tableName);
-    writeJsonToZip(zipOutputStream, tableName, tableDataList);
-    tableDataList.clear();
-}
-```
+int windowSize = 5;
+int nextIndex = 0;
+Map<String, CompletableFuture<List<Map<String, Object>>>> window = new LinkedHashMap<>();
 
-这里的重点是：**写完一张表，就让这张表的数据尽快释放**，不要继续挂在一个全局大对象里。
-
-### 3. 最多预取 3 张表
-
-为了不让性能退回完全串行，又不能让所有表一起查，可以用固定大小窗口控制预取数量。
-
-```java
-int windowSize = 3;
-Queue<Future<TableExportData>> window = new ArrayDeque<>();
-
-for (String tableName : tableNameList) {
-    Future<TableExportData> future = executorService.submit(() -> queryTableExportData(tableName));
-    window.offer(future);
-
-    if (window.size() >= windowSize) {
-        Future<TableExportData> firstFuture = window.poll();
-        TableExportData tableExportData = firstFuture.get();
-        writeTableToZip(zipOutputStream, tableExportData);
-        tableExportData.clear();
+while (nextIndex < tableNameList.size() || !window.isEmpty()) {
+    while (nextIndex < tableNameList.size() && window.size() < windowSize) {
+        String tableName = tableNameList.get(nextIndex);
+        CompletableFuture<List<Map<String, Object>>> future =
+                CompletableFuture.supplyAsync(() -> queryTable(tableName), queryExecutor);
+        window.put(tableName, future);
+        nextIndex++;
     }
-}
 
-while (!window.isEmpty()) {
-    Future<TableExportData> future = window.poll();
-    TableExportData tableExportData = future.get();
-    writeTableToZip(zipOutputStream, tableExportData);
-    tableExportData.clear();
+    Map.Entry<String, CompletableFuture<List<Map<String, Object>>>> currentEntry =
+            window.entrySet().iterator().next();
+    String tableName = currentEntry.getKey();
+    CompletableFuture<List<Map<String, Object>>> future = currentEntry.getValue();
+    window.remove(tableName);
+
+    List<Map<String, Object>> rows = future.get();
+    writeTableToZip(zipOutputStream, tableName, rows);
 }
 ```
 
-这段只是简化后的思路。真实代码里还要处理线程池关闭、异常回传、ZIP 流关闭、上传失败等情况。
+这段代码表达的不是“每次查询 5 条数据”，而是**每次最多预取 5 张表**。当前优化控制的是表级并发，不是单表分页。
 
-## 六、优化后的效果
+### 3. 使用管道流边生成边上传 ZIP
 
-这次优化后，整体链路明显变短。
+ZIP 不需要先完整生成到内存后再上传，而是通过管道流连接写入端和上传端：
+
+```text
+ZIP 写入线程
+    ↓
+PipedOutputStream
+    ↓
+PipedInputStream
+    ↓
+对象存储上传
+```
+
+写入多少，上传端就读取多少。这样可以减少完整 ZIP 包在内存中的停留时间。
+
+### 4. 关联文件直接写入 ZIP
+
+服务端读取关联文件的输入流，直接写成 ZIP 内的目录和文件：
+
+```text
+full-pull.zip
+├── syncTime.json
+├── table-a.json
+├── table-b.json
+└── schema-files/
+    ├── schema-001/
+    │   ├── schema.xsd
+    │   └── schema.json
+    └── schema-002/
+        ├── schema.xsd
+        └── schema.json
+```
+
+客户端最后只需要下载一个 ZIP，解压后按目录读取 JSON 和 Schema 文件，不再为每个文件单独发起请求。
+
+## 六、优化前后流程对比
+
+```mermaid
+sequenceDiagram
+    participant C as 客户端
+    participant P as 全量拉取接口
+    participant D as 数据库
+    participant M as 服务端内存
+    participant O as 对象存储
+
+    rect rgb(245, 245, 245)
+        note over C,O: 优化前
+        C->>P: 请求全量数据
+        P->>D: 查询多张业务表
+        D-->>P: 返回全部结果
+        P->>M: 合并到 allData
+        P->>M: 统一生成 JSON
+        P-->>C: 返回全量数据
+        loop 每个关联文件
+            C->>P: 单独请求文件
+            P->>O: 读取文件
+            O-->>C: 返回文件
+        end
+    end
+
+    rect rgb(235, 248, 235)
+        note over C,O: 优化后
+        C->>P: 请求全量数据
+        P->>O: 建立 ZIP 管道上传
+        loop 窗口内最多预取 5 张表
+            P->>D: 查询当前表
+            D-->>P: 返回当前表结果
+            P->>O: 写入 JSON 和关联文件
+            P->>M: 释放当前表结果引用
+        end
+        O-->>C: 返回一个完整 ZIP 下载地址
+    end
+```
+
+图中最重要的变化有两个：
+
+1. **内存中不再长期保存所有表的结果。**
+2. **关联文件由服务端一起放入 ZIP，客户端只下载一次。**
+
+## 七、优化后的结果
+
+在本次数据规模和测试环境下，优化后的全量拉取接口耗时约为 18 秒。这个数据是本次实测结果，不代表所有环境和数据量都能达到相同数值。
 
 | 指标 | 优化前 | 优化后 |
 | --- | --- | --- |
-| JSON 写入 | 全部查完后统一写 | 边查边写 |
-| XSD 获取 | 前端单独多次拉取 | 后端一起写入文件夹，前端不再单独请求下载 |
-| JVM 内存 | 所有表数据 + ZIP 相关对象 | 约 3 张表数据 + 当前写入表 + 管道缓冲 |
-| 数据库压力 | 29 张表并发查询 | 最多预取 3 张表 |
-| 总耗时 | 约 20 分钟 | 约 18 秒 |
+| 数据组织 | 所有表合并到 `allData` | 按表查询、按表写入 |
+| 查询策略 | 多张表同时查询 | 滑动窗口最多预取 5 张表 |
+| JSON 处理 | 全部查完后统一生成 | 当前表查询完成后立即写入 |
+| 关联文件 | 客户端单独多次下载 | 服务端直接写入 ZIP |
+| ZIP 上传 | 生成完成后再上传 | 管道流边生成边上传 |
+| 整体耗时 | 平均接近 20 分钟 | 本次实测约 18 秒 |
 
-<mark>这次收益最大的点，不只是速度变快，而是内存峰值从“全量数据堆在一起”降到了“有限窗口内的数据”。</mark>
+这次结果不能简单归因于某一个点：
 
-## 七、还没彻底解决的边界
+- **滑动窗口**降低了多表并发查询和 `allData` 聚合带来的内存压力。
+- **按表写入**缩短了数据从查询到文件落地的等待链路。
+- **关联文件打包**减少了客户端多次请求和下载的时间。
 
-这次优化解决了 `allData` 全量大 Map 的问题，但没有彻底解决所有 OOM 风险。
+## 八、当前方案的边界
 
-目前仍然存在一个边界：**如果单张表本身特别大，Mapper 一次返回 `List<Map<String, Object>>`，这张表仍然可能把内存打满。**
+### 1. 单张超大表仍然可能占满内存
 
-比如某些 JSON 数据表，如果单表数据量非常大，即使窗口大小是 3，也挡不住单表一次性加载带来的内存压力。
+当前 Mapper 仍然返回：
 
-后续如果这个问题真的出现，可以继续优化成：
+```java
+List<Map<String, Object>>
+```
 
-| 方案 | 说明 |
+所以，滑动窗口只能限制“同时处理几张表”，不能限制“一张表一次返回多少行”。如果某张表本身就非常大，它仍然可能在一次查询时占用大量内存。
+
+这部分目前还没有改造。如果后续出现单表过大导致内存不足，再考虑按批次读取、分页写入或数据库流式读取。**这些都不是本次已经使用的方案。**
+
+### 2. 滑动窗口不等于一致性快照
+
+本次优化解决的是性能和内存问题，不会自动保证所有表来自同一时刻。
+
+如果全量拉取期间数据库仍在更新，可能出现：
+
+```text
+表A先读取
+    ↓
+数据库发生更新
+    ↓
+表B后读取
+```
+
+如果业务要求严格一致，后续需要单独设计版本号、导出会话或快照机制。不要简单把整个导出过程包进一个长事务，否则可能增加数据库连接、MVCC 和 Undo 压力。
+
+### 3. 窗口大小需要压测
+
+窗口越小，内存和数据库压力越低，但并发收益也越小；窗口越大，接口可能更快，但单次请求的资源占用会上升。
+
+建议观察：
+
+| 指标 | 关注点 |
 | --- | --- |
-| 分页读取单表 | 每次读取一批，写入 JSON 后清空，再读下一批 |
-| MyBatis Cursor | 流式读取结果集，避免一次性加载完整 List |
-| JSON 流式写入 | 使用流式 API 写数组，减少中间对象 |
-| 控制单次导出范围 | 按时间、项目、类型等条件缩小导出数据 |
-
-目前这部分先作为后续优化项，不提前复杂化。
+| 接口耗时 | 是否真正缩短 |
+| JVM 峰值内存 | 是否频繁 GC |
+| 数据库 CPU 和连接数 | 是否被全量拉取压满 |
+| ZIP 上传速度 | 是否出现管道阻塞 |
+| 并发全量请求 | 多个用户同时拉取时是否稳定 |
 
 ## 总结
 
-这次优化的核心思路就是一句话：**不要先把所有数据都查出来再写文件，而是边查、边写、边释放。**
+这次问题的本质是：**多张表全量查询时，所有结果长期堆在 `allData` 中，客户端还要额外下载多个关联文件。**
 
-滑动窗口在这里起到的是一个折中作用：
+最终采用的方案是：
 
-- 比完全串行快
-- 比全量并发稳
-- 能降低 JVM 内存峰值
-- 能减少数据库瞬时压力
-- 还能让 ZIP 和 XSD 文件一起在后端完成
+1. 按表查询、按表写入，不再合并全量 `allData`。
+2. 使用表级滑动窗口，当前最多预取 5 张表。
+3. 使用管道流边生成边上传 ZIP。
+4. 将关联 Schema 文件直接写入 ZIP，客户端只下载一次。
 
-但也要清楚它的边界：滑动窗口解决的是“多表全量合并”的内存问题，不解决“单表一次性查太大”的问题。
+接口整体耗时从平均接近 20 分钟降到本次实测约 18 秒，JVM 内存峰值也从“所有表结果叠加”降为“窗口内表结果加当前写入缓冲”。
 
-<mark>如果后面单表数据也大到撑爆内存，下一步就要做分页读取或 Cursor 流式写入。</mark>
+<mark>滑动窗口解决的是多表并发和内存峰值问题；单表过大仍需要分批读取或流式写入，不能把两类问题混为一谈。</mark>
