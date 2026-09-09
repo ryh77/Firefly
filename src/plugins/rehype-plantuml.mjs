@@ -3,6 +3,12 @@ import { visit } from "unist-util-visit";
 import plantumlThemeScript from "./plantuml-theme-switch.js?raw";
 import {
 	DIAGRAM_CONTAINER,
+	DIAGRAM_PREVIEW_PANEL,
+	DIAGRAM_SOURCE_PANEL,
+	DIAGRAM_TOOLBAR,
+	DIAGRAM_VIEW_PANEL,
+	DIAGRAM_VIEW_TAB,
+	DIAGRAM_VIEW_TABS,
 	DIAGRAM_WRAPPER,
 	PLANTUML_CONTAINER,
 	PLANTUML_IMAGE,
@@ -22,6 +28,55 @@ function generateId() {
 
 /** 已注入客户端脚本的 tree 集合，用于避免同一 tree 多次注入 */
 const scriptInjectedTrees = new WeakSet();
+
+function buildViewToolbar() {
+	return h("div", { class: DIAGRAM_TOOLBAR }, [
+		h(
+			"div",
+			{
+				class: DIAGRAM_VIEW_TABS,
+				role: "tablist",
+				"aria-label": "PlantUML 图表视图",
+			},
+			[
+				h(
+					"button",
+					{
+						type: "button",
+						class: `${DIAGRAM_VIEW_TAB} is-active`,
+						"data-diagram-view": "preview",
+						role: "tab",
+						"aria-selected": "true",
+					},
+					"预览",
+				),
+				h(
+					"button",
+					{
+						type: "button",
+						class: DIAGRAM_VIEW_TAB,
+						"data-diagram-view": "source",
+						role: "tab",
+						"aria-selected": "false",
+					},
+					"源码",
+				),
+			],
+		),
+	]);
+}
+
+function buildSourcePanel(code) {
+	return h(
+		"div",
+		{
+			class: `${DIAGRAM_SOURCE_PANEL} ${DIAGRAM_VIEW_PANEL}`,
+			"data-diagram-panel": "source",
+			hidden: true,
+		},
+		[h("pre", {}, [h("code", { class: "language-plantuml" }, code)])],
+	);
+}
 
 /**
  * rehype 插件：把 `div.plantuml-container`（由 remark-plantuml 标记）改写为
@@ -56,6 +111,7 @@ export function rehypePlantuml() {
 				node.properties["data-plantuml-dark"] ||
 				node.properties.dataPlantumlDark ||
 				lightSrc;
+			const sourceCode = extractText(node);
 			let altText =
 				node.properties["data-plantuml-alt"] ||
 				node.properties.dataPlantumlAlt ||
@@ -91,8 +147,20 @@ export function rehypePlantuml() {
 
 			node.properties = {
 				class: `${DIAGRAM_CONTAINER} ${PLANTUML_CONTAINER}`,
+				"data-view": "preview",
 			};
-			node.children = [wrapper];
+			node.children = [
+				buildViewToolbar(),
+				h(
+					"div",
+					{
+						class: `${DIAGRAM_VIEW_PANEL} ${DIAGRAM_PREVIEW_PANEL}`,
+						"data-diagram-panel": "preview",
+					},
+					[wrapper],
+				),
+				buildSourcePanel(sourceCode),
+			];
 
 			foundAny = true;
 		});

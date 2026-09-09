@@ -8,6 +8,12 @@
 // 容器
 export const DIAGRAM_CONTAINER = "diagram-container";
 export const DIAGRAM_WRAPPER = "diagram-wrapper";
+export const DIAGRAM_TOOLBAR = "diagram-toolbar";
+export const DIAGRAM_VIEW_TABS = "diagram-view-tabs";
+export const DIAGRAM_VIEW_TAB = "diagram-view-tab";
+export const DIAGRAM_VIEW_PANEL = "diagram-view-panel";
+export const DIAGRAM_PREVIEW_PANEL = "diagram-preview-panel";
+export const DIAGRAM_SOURCE_PANEL = "diagram-source-panel";
 
 // Mermaid
 export const MERMAID_CONTAINER = "mermaid-diagram-container";

@@ -30,6 +30,37 @@
 		if (container.dataset.pzInit === "true") return;
 		container.dataset.pzInit = "true";
 
+		const tabs = Array.from(container.querySelectorAll(".diagram-view-tab"));
+		const panels = Array.from(
+			container.querySelectorAll("[data-diagram-panel]"),
+		);
+		let controls = null;
+		const setView = (view) => {
+			const nextView = view === "source" ? "source" : "preview";
+			container.dataset.view = nextView;
+			if (controls) controls.hidden = nextView === "source";
+			panels.forEach((panel) => {
+				panel.hidden = panel.dataset.diagramPanel !== nextView;
+			});
+			tabs.forEach((tab) => {
+				const active = tab.dataset.diagramView === nextView;
+				tab.classList.toggle("is-active", active);
+				tab.setAttribute("aria-selected", String(active));
+			});
+		};
+
+		if (container.dataset.viewTabsInit !== "true") {
+			tabs.forEach((tab) => {
+				tab.addEventListener("click", (e) => {
+					e.preventDefault();
+					e.stopPropagation();
+					setView(tab.dataset.diagramView);
+				});
+			});
+			container.dataset.viewTabsInit = "true";
+		}
+		setView(container.dataset.view || "preview");
+
 		// 收集所有可操作的目标元素（Mermaid 有 light+dark 两个 SVG）
 		var targets = Array.from(
 			container.querySelectorAll(
@@ -78,7 +109,7 @@
 		};
 
 		// 控制栏
-		const controls = document.createElement("div");
+		controls = document.createElement("div");
 		controls.className = "diagram-controls";
 		[
 			["+", "放大", () => zoomBy(SCALE_STEP)],
@@ -99,6 +130,7 @@
 			controls.appendChild(el);
 		});
 		container.appendChild(controls);
+		setView(container.dataset.view || "preview");
 
 		// 拖拽平移
 		let dragging = false;
@@ -107,9 +139,11 @@
 		let stx = 0;
 		let sty = 0;
 		container.addEventListener("pointerdown", (e) => {
+			if (container.dataset.view === "source") return;
 			if (e.pointerType === "touch") return;
 			if (e.button !== 0) return;
 			if (e.target.closest(".diagram-controls")) return;
+			if (e.target.closest(".diagram-toolbar, .diagram-source-panel")) return;
 			dragging = true;
 			sx = e.clientX;
 			sy = e.clientY;
@@ -135,7 +169,13 @@
 
 		// 双击
 		container.addEventListener("dblclick", (e) => {
-			if (e.target.closest(".diagram-controls")) return;
+			if (container.dataset.view === "source") return;
+			if (
+				e.target.closest(
+					".diagram-controls, .diagram-toolbar, .diagram-source-panel",
+				)
+			)
+				return;
 			if (state.scale !== 1) reset();
 			else zoomBy(SCALE_STEP * SCALE_STEP, e.clientX, e.clientY);
 		});

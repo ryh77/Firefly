@@ -5,6 +5,12 @@ import { h } from "hastscript";
 import { visit } from "unist-util-visit";
 import {
 	DIAGRAM_CONTAINER,
+	DIAGRAM_PREVIEW_PANEL,
+	DIAGRAM_SOURCE_PANEL,
+	DIAGRAM_TOOLBAR,
+	DIAGRAM_VIEW_PANEL,
+	DIAGRAM_VIEW_TAB,
+	DIAGRAM_VIEW_TABS,
 	DIAGRAM_WRAPPER,
 	MERMAID_CONTAINER,
 	MERMAID_ERROR,
@@ -14,6 +20,55 @@ import {
 	MERMAID_WRAPPER,
 } from "./utils/diagramConstants.js";
 import { extractText } from "./utils/extractText.js";
+
+function buildViewToolbar() {
+	return h("div", { class: DIAGRAM_TOOLBAR }, [
+		h(
+			"div",
+			{
+				class: DIAGRAM_VIEW_TABS,
+				role: "tablist",
+				"aria-label": "Mermaid 图表视图",
+			},
+			[
+				h(
+					"button",
+					{
+						type: "button",
+						class: `${DIAGRAM_VIEW_TAB} is-active`,
+						"data-diagram-view": "preview",
+						role: "tab",
+						"aria-selected": "true",
+					},
+					"预览",
+				),
+				h(
+					"button",
+					{
+						type: "button",
+						class: DIAGRAM_VIEW_TAB,
+						"data-diagram-view": "source",
+						role: "tab",
+						"aria-selected": "false",
+					},
+					"源码",
+				),
+			],
+		),
+	]);
+}
+
+function buildSourcePanel(code) {
+	return h(
+		"div",
+		{
+			class: `${DIAGRAM_SOURCE_PANEL} ${DIAGRAM_VIEW_PANEL}`,
+			"data-diagram-panel": "source",
+			hidden: true,
+		},
+		[h("pre", {}, [h("code", { class: "language-mermaid" }, code)])],
+	);
+}
 
 const mermanWasmUrl = import.meta.resolve(
 	"@mermanjs/web/pkg/merman_wasm_bg.wasm",
@@ -117,12 +172,24 @@ export function rehypeMermaid(options = {}) {
 				}
 				node.properties = {
 					class: `${DIAGRAM_CONTAINER} ${MERMAID_CONTAINER}`,
+					"data-view": "preview",
 				};
 				node.children = [
-					h("div", { class: MERMAID_ERROR }, [
-						h("p", {}, "Mermaid 图表渲染失败，请检查图表语法是否正确"),
-						h("pre", { class: MERMAID_FALLBACK_CODE }, mermaidCode),
-					]),
+					buildViewToolbar(),
+					h(
+						"div",
+						{
+							class: `${DIAGRAM_VIEW_PANEL} ${DIAGRAM_PREVIEW_PANEL}`,
+							"data-diagram-panel": "preview",
+						},
+						[
+							h("div", { class: MERMAID_ERROR }, [
+								h("p", {}, "Mermaid 图表渲染失败，请检查图表语法是否正确"),
+								h("pre", { class: MERMAID_FALLBACK_CODE }, mermaidCode),
+							]),
+						],
+					),
+					buildSourcePanel(mermaidCode),
 				];
 				return;
 			}
@@ -131,14 +198,28 @@ export function rehypeMermaid(options = {}) {
 			// 用 fromHtml 把 SVG 字符串解析成 element 节点，而不是塞进 { type: "raw" }：
 			// MDX 的 hast-util-to-estree 不支持 raw 节点（会抛 "Cannot handle unknown node `raw`"），
 			// 解析成元素后 MDX / Markdown 两条渲染管线都能正常输出。
-			node.properties = { class: `${DIAGRAM_CONTAINER} ${MERMAID_CONTAINER}` };
+			node.properties = {
+				class: `${DIAGRAM_CONTAINER} ${MERMAID_CONTAINER}`,
+				"data-view": "preview",
+			};
 			const lightChildren = fromHtml(lightSvg, { fragment: true }).children;
 			const darkChildren = fromHtml(darkSvg, { fragment: true }).children;
 			node.children = [
-				h("div", { class: `${DIAGRAM_WRAPPER} ${MERMAID_WRAPPER}` }, [
-					h("div", { class: MERMAID_SVG_LIGHT }, lightChildren),
-					h("div", { class: MERMAID_SVG_DARK }, darkChildren),
-				]),
+				buildViewToolbar(),
+				h(
+					"div",
+					{
+						class: `${DIAGRAM_VIEW_PANEL} ${DIAGRAM_PREVIEW_PANEL}`,
+						"data-diagram-panel": "preview",
+					},
+					[
+						h("div", { class: `${DIAGRAM_WRAPPER} ${MERMAID_WRAPPER}` }, [
+							h("div", { class: MERMAID_SVG_LIGHT }, lightChildren),
+							h("div", { class: MERMAID_SVG_DARK }, darkChildren),
+						]),
+					],
+				),
+				buildSourcePanel(mermaidCode),
 			];
 		});
 	};
