@@ -76,6 +76,19 @@ MySQL 磁盘与 Buffer Pool
 
 因此，用户看到的“页面一直 loading”，并不只是 SQL 执行慢，而是数据库、应用和网络都在反复搬运同一批大字段。
 
+
+查询优化前项目的数据体积如下：
+```sql
+SELECT COUNT(*),
+       SUM(OCTET_LENGTH(table_value))  AS total_bytes,
+       AVG(OCTET_LENGTH(table_value))  AS avg_bytes,
+       MAX(OCTET_LENGTH(table_value))  AS max_bytes
+FROM icdt_project_json_data
+WHERE project_id = ?;
+```
+
+![表体积统计](./images/sliding-window-export-json-oom/table-size-stat.png)
+
 ## 三、定位过程：慢的不是查询条件，而是大字段
 
 一开始最容易怀疑的是索引、关联条件或执行计划。这一步不能只看表上“好像建过索引”，还是要以实际执行计划为准。
