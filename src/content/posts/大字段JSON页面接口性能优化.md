@@ -54,6 +54,19 @@ SQL 已经命中索引，`SELECT` 里没有 `*`，返回的也都是页面真正
 
 当时的数据体量如下：
 
+查询SQL和执行结果图片（执行结果图片是后面补的，当时优化前的数据还是按照下面表格的为准）
+```sql
+SELECT COUNT(*),
+       SUM(OCTET_LENGTH(table_value))  AS total_bytes,
+       AVG(OCTET_LENGTH(table_value))  AS avg_bytes,
+       MAX(OCTET_LENGTH(table_value))  AS max_bytes
+FROM icdt_project_json_data
+WHERE project_id = ?;
+```
+
+![表体积统计](./images/sliding-window-export-json-oom/table-size-stat.png)
+
+
 | 数据指标 | 实际体量 |
 | --- | --- |
 | 单项目记录数 | 约 2000 行 |
@@ -75,19 +88,6 @@ MySQL 磁盘与 Buffer Pool
 ```
 
 因此，用户看到的“页面一直 loading”，并不只是 SQL 执行慢，而是数据库、应用和网络都在反复搬运同一批大字段。
-
-
-查询优化前项目的数据体积如下：
-```sql
-SELECT COUNT(*),
-       SUM(OCTET_LENGTH(table_value))  AS total_bytes,
-       AVG(OCTET_LENGTH(table_value))  AS avg_bytes,
-       MAX(OCTET_LENGTH(table_value))  AS max_bytes
-FROM icdt_project_json_data
-WHERE project_id = ?;
-```
-
-![表体积统计](./images/sliding-window-export-json-oom/table-size-stat.png)
 
 ## 三、定位过程：慢的不是查询条件，而是大字段
 
